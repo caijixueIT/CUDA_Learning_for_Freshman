@@ -32,6 +32,8 @@ KERNEL_NAMES = {
     9: "Autotuning",
     10: "Warptiling",
     11: "Double Buffering",
+    12: "Double Buffering",
+
 }
 
 
@@ -111,7 +113,7 @@ if __name__ == "__main__":
             data.append({"kernel": kernel_nr, "size": size, "gflops": gflops})
     df = pd.DataFrame(data)
 
-    plot(df)
+    # plot(df)
 
     df = df[df["size"] == 4096].sort_values(by="gflops", ascending=True)[["kernel", "gflops"]]
     df["kernel"] = df["kernel"].map({k: f"{k}: {v}" for k, v in KERNEL_NAMES.items()})
