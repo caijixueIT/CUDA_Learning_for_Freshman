@@ -16,17 +16,6 @@ __global__ void reduce_sum_kernel(float* arr, int n, float* res) {
     smem[tid] = arr[idx];
     __syncthreads();
 
-    // for (int i = 1; i < THREAD_PER_BLOCK; i = i * 2) {
-    //     // int x = tid * i * 2;
-    //     // if (x < THREAD_PER_BLOCK) {
-    //     //     smem[x] += smem[x + i];
-    //     // }
-    //     if ((tid % (2 * i)) == 0) {
-    //         smem[tid] += smem[tid + i];
-    //     }
-    //     __syncthreads();
-    // }
-
     for (int i = THREAD_PER_BLOCK / 2; i >= 1; i >>= 1) {
         if (tid < i) {
             smem[tid] += smem[tid + i];
