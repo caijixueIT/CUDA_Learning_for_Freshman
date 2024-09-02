@@ -6,44 +6,32 @@
 #include <sys/time.h>
 
 #define THREAD_PER_BLOCK 256
-#define ADD_WHEN_LOADING 4
 
-template <int N>
-struct vec {
-    float data[N];
-    __device__ float sum() {
-        float s = 0.f;
-        for (int i = 0; i < N; ++i) {
-            s += data[i];
-        }
-        return s;
-    }
-};
-
-__global__ void reduce_sum_kernel(float* arr, int n, float* res) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void prefix_sum_kernel(float* arr, float* res, int N) {
     int tid = threadIdx.x;
-    
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
     __shared__ float smem[THREAD_PER_BLOCK];
 
-    smem[tid] = ((vec<ADD_WHEN_LOADING>*)(arr + idx))[0].sum();
+    smem[tid] = arr[idx];
     __syncthreads();
 
-    for (int i = THREAD_PER_BLOCK / 2; i >= 1; i >>= 1) {
-        if (tid < i) {
-            smem[tid] += smem[tid + i];
+    for (int i = 1; i < THREAD_PER_BLOCK; i = i * 2) {
+        int x = tid * 2 * i;
+        if (x < THREAD_PER_BLOCK) {
+            for (int j = x; j < x + i; ++j) {
+                smem[j] += smem[x + i];
+            }
         }
         __syncthreads();
     }
 
-    if (tid == 0) {
-        res[blockIdx.x] = smem[0];
-    }
+    res[idx] = smem[tid];
 }
 
 bool check(float *out, float *res, int N){
     for(int i=0; i<N; i++){
-        printf("out[%d]=%f, ref[%d]=%f\n", i, out[i], i, res[i]);
+        // printf("out[%d]=%f, ref[%d]=%f\n", i, out[i], i, res[i]);
         if(out[i]!= res[i])
             return false;
     }
@@ -51,10 +39,8 @@ bool check(float *out, float *res, int N){
 }
 
 int main() {
-    constexpr int N = 1024 * 1024;
+    constexpr int N = 1024*1024;
     constexpr int threads_per_block = THREAD_PER_BLOCK;
-    constexpr int add_when_loading = ADD_WHEN_LOADING;
-    constexpr int num_blocks = N / threads_per_block / add_when_loading;
 
     float* arr = (float*)malloc(N * sizeof(float));
     for (int i = 0; i < N; ++i) {
@@ -65,27 +51,27 @@ int main() {
     cudaMalloc((void**)&d_arr, N * sizeof(float));
     cudaMemcpy(d_arr, arr, N * sizeof(float), cudaMemcpyHostToDevice);
 
-    float* out = (float*)malloc(num_blocks * sizeof(float));
-    float* out_ref = (float*)malloc(num_blocks * sizeof(float));
+    float* out = (float*)malloc(N * sizeof(float));
+    float* out_ref = (float*)malloc(N * sizeof(float));
 
     float* d_out;
-    cudaMalloc((void**)&d_out, num_blocks * sizeof(float));
+    cudaMalloc((void**)&d_out, N * sizeof(float));
 
-    for (int i = 0; i < num_blocks; ++i) {
+    for (int i = 0; i < N/threads_per_block; ++i) {
         float sum = 0.f;
-        for (int j = 0; j < threads_per_block * add_when_loading; ++j) {
+        for (int j = threads_per_block - 1; j >= 0; --j) {
             sum += arr[i * threads_per_block + j];
+            out_ref[i * threads_per_block + j] = sum;
         }
-        out_ref[i] = sum;
     }
 
-    dim3 grid_dim(num_blocks);
+    dim3 grid_dim(N / threads_per_block);
     dim3 block_dim(threads_per_block);
 
-    reduce_sum_kernel<<<grid_dim, block_dim>>>(d_arr, N, d_out);
-    cudaMemcpy(out, d_out, num_blocks * sizeof(float), cudaMemcpyDeviceToHost);
+    prefix_sum_kernel<<<grid_dim, block_dim>>>(d_arr, d_out, N);
+    cudaMemcpy(out, d_out, N * sizeof(float), cudaMemcpyDeviceToHost);
 
-    if (check(out, out_ref, num_blocks)) {
+    if (check(out, out_ref, N)) {
         std::cout << "succeed!" << std::endl;
     } else {
         std::cout << "failed!" << std::endl;
@@ -93,7 +79,7 @@ int main() {
 
     int TEST_TIMES = 100;
     for (int i = 0; i < TEST_TIMES; ++i) {
-        reduce_sum_kernel<<<grid_dim, block_dim>>>(d_arr, N, d_out);
+        prefix_sum_kernel<<<grid_dim, block_dim>>>(d_arr, d_out, N);
     }
     float time_elapsed=0;
     cudaEvent_t start, stop;
@@ -102,13 +88,13 @@ int main() {
 
     cudaEventRecord(start,0);    //记录当前时间
     for (int i = 0; i < TEST_TIMES; ++i) {
-        reduce_sum_kernel<<<grid_dim, block_dim>>>(d_arr, N, d_out);
+        prefix_sum_kernel<<<grid_dim, block_dim>>>(d_arr, d_out, N);
     }
     cudaEventRecord(stop,0);    //记录当前时间
     cudaEventSynchronize(start);    //Waits for an event to complete.
     cudaEventSynchronize(stop);     //Waits for an event to complete.Record之前的任务
     cudaEventElapsedTime(&time_elapsed, start, stop);    //计算时间差
-    std::cout << "reduce_sum_kernel elasped time = " << time_elapsed/TEST_TIMES << "ms" << std::endl;
+    std::cout << "prefix_sum_kernel elasped time = " << time_elapsed/TEST_TIMES << "ms" << std::endl;
 
     cudaFree(d_arr);
     cudaFree(d_out);
