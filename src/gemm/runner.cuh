@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
+#include <sys/time.h>
 
 float get_sec() {
   struct timeval time;
