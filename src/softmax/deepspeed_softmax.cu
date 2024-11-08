@@ -19,23 +19,23 @@ unsigned int next_pow2(unsigned int n) {
 }
 
 bool check(float *out, float *res, int N, int row, int col) {
-    // 只打印第一个 batch 第一个 head 的结果
-    for (int i = 0; i < row; i++) {
-        for (int j = 0; j < col; j++) {
+    // 只打印第一个 batch 第一个 head 的结果的左上角 8x8 的子矩阵
+    for (int i = 0; i < row && i < 8; i++) {
+        for (int j = 0; j < col && j < 8; j++) {
             printf("%f ", out[i * col + j]);
         }
         printf("\n");
     }
     printf("\n\n");
-    for (int i = 0; i < row; i++) {
-        for (int j = 0; j < col; j++) {
+    for (int i = 0; i < row && i < 8; i++) {
+        for (int j = 0; j < col && j < 8; j++) {
             printf("%f ", res[i * col + j]);
         }
         printf("\n");
     }
-
+    printf("\n\n");
     for(int i=0; i<N; i++){
-        if(abs(out[i] - res[i]) > 1e-3) {
+        if(abs(out[i] - res[i]) > 1e-4) {
             printf("out[%d]=%f, res[%d]=%f", i, out[i], i, res[i]);
             return false;
         }
@@ -193,7 +193,7 @@ __global__ void attn_softmax_v2(float* vals,
 
             sum = __shfl_sync(0xffffffff, sum, wid);
         }
-        sum += 1e-6;
+        // sum += 1e-6;
 
         for (int i = 0; i < iterations; i++) {
             int data_id = i * (reduceWidth << 2) + (seq_lane);
@@ -263,10 +263,10 @@ void launch_attn_softmax_v2(float* vals,
 }
 
 int main() {
-    int batch_size = 1;
-    int num_heads = 1;
-    int num_seqs = 8;
-    int seq_len = 8;
+    int batch_size = 2;
+    int num_heads = 8;
+    int num_seqs = 128;
+    int seq_len = 128;
 
     int N = batch_size * num_heads * num_seqs * seq_len;
     float* h_val = (float*)malloc(N * sizeof(float));
@@ -282,22 +282,14 @@ int main() {
     }
 
     int mask_begin = 1;
-    for (int i = 0; i < num_seqs; ++i) {
+    for (int i = 0; i < num_seqs; ++i, ++mask_begin) {
         for (int j = 0; j < mask_begin; ++j) {
             h_mask[i * seq_len + j] = 0.f;
         }
         for (int j = mask_begin; j < seq_len; ++j) {
             h_mask[i * seq_len + j] = minus_infinity;
         }
-        mask_begin++;
     }
-    // for (int i = 0; i < num_seqs; ++i) {
-    //     for (int j = 0; j < seq_len; ++j) {
-    //         printf("%f ", h_mask[j + i * seq_len]);
-    //     }
-    //     printf("\n");
-    // }
-    // printf("\n");
 
     float* d_val;
     cudaMalloc((void**)&d_val, N * sizeof(float));
@@ -319,7 +311,7 @@ int main() {
                 row_max = max(row_max, ptr[j * seq_len + k] + h_mask[j * seq_len + k]);
             }
 
-            float row_sum = 1e-6;
+            float row_sum = 0.f;
             for (int k = 0; k < seq_len; ++k) {
                 row_sum += expf(ptr[j * seq_len + k] + h_mask[j * seq_len + k] - row_max);
             }
