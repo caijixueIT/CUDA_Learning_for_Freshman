@@ -1,0 +1,1 @@
+nvcc -arch=sm_89 -rdc=true act.cu -o test.out && echo "compilation done" && ./test.out
