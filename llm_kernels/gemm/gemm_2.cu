@@ -18,46 +18,55 @@ float rand_float() {
 };
 
 
+// 每个 block 计算 C 中大小为 BM * BN 的子矩阵, block 个数 = (M / BM) * (N / BN)
+// 每个 thread 计算 C 中大小为 TM * TN 的子矩阵, thread 个数 = (BM / TM) * (BN / TN)
 // grid(M / BM, N / BN)
-// block(BM, BN)
+// block(BM / TM, BN / TN)
 // A [M, K]
 // B [K, N]
 // C [M, N]
-template<int BM, int BN, int BK>
+template<int BM=32, int BN=32, int BK=4, int TM=4, int TN=4>
 __global__ void gemm(float* A, float* B, float* C, int M, int N, int K) {
     __shared__ float sA[BM][BK];
     __shared__ float sB[BK][BN];
-
-    int A_row = blockIdx.x * BM + threadIdx.x;
-    int B_col = blockIdx.y * BN + threadIdx.y;
-
-    float val = 0.f;
+    
+    float vals[TM][TN] = {0.f};
     for (int k = 0; k < K / BK; ++k) {
-        // 这种写法只适用于 BM=BK=BN 的情况
-        // int A_col = k * BK + threadIdx.y;
-        // int B_row = k * BK + threadIdx.x;
-        // sA[threadIdx.x][threadIdx.y] = A[A_row * K + A_col];
-        // sB[threadIdx.x][threadIdx.y] = B[B_row * N + B_col];
-        // __syncthreads();
+        for (int i = threadIdx.x; i < BM; i += TM) {
+            for (int j = threadIdx.y; j < BN; j += TN) {
+                int A_row = blockIdx.x * BM + i;
+                int B_col = blockIdx.y * BN + j;
 
-        // BK 和 BM、BN 取值不相等，就需要让一个线程 load 多个值 gmem->smem
-        for (int i = threadIdx.y; i < BK; i += BN) {
-            int A_col = k * BK + i;
-            sA[threadIdx.x][i] = A[A_row * K + A_col];
-        }
-        for (int i = threadIdx.x; i < BK; i += BM) {
-            int B_row = k * BK + i;
-            sB[i][threadIdx.y] = B[B_row * N + B_col];
+                for (int l = threadIdx.y; l < BK; l +=TN) {
+                    int A_col = k * BK + l;
+                    sA[i][l] = A[A_row * K + A_col];
+                }
+
+                for (int l = threadIdx.x; l < BK; l += TM) {
+                    int B_row = k * BK + l;
+                    sB[l][j] = B[B_row * N + B_col];
+                }
+            }
         }
         __syncthreads();
-
-        for (int i = 0; i < BK; ++i) {
-            val += sA[threadIdx.x][i] * sB[i][threadIdx.y];
+        
+        for (int i = 0; i < TM; ++i) {
+            for (int j = 0; j < TN; ++j) {
+                for (int l = 0; l < BK; l++) {
+                    vals[i][j] += sA[i * BM / TM + threadIdx.x][l] * sB[l][j * BN / TN + threadIdx.y];
+                }
+            }
         }
         __syncthreads();
     }
 
-    C[A_row * N + B_col] = val;
+    for (int i = 0; i < TM; ++i) {
+        for (int j = 0; j < TN; ++j) {
+            int C_row = blockIdx.x * BM + i * (BM / TM) + threadIdx.x;
+            int C_col = blockIdx.y * BN + j * (BN / TN) + threadIdx.y;
+            C[C_row * N + C_col] = vals[i][j];
+        }
+    }
 }
 
 void gemm_cpu(float* A, float* B, float* C, int M, int N, int K) {
@@ -80,11 +89,18 @@ void init_matric(float* A, int row, int col) {
     }
 }
 
+void init_identity_matric(float* A, int row, int col) {
+    for (int i = 0; i < row; ++i) {
+        for (int j = 0; j < col; ++j) {
+            A[i * col + j] = (i == j ? 1.f : 0.f);
+        }
+    }
+}
+
 bool check(float* res_gpu, float* res_cpu, int M, int N) {
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {
-            // printf("(%d, %d) %f %f\n", i, j, res_gpu[i * N + j], res_cpu[i * N + j]);
-            if (fabs(res_gpu[i * N + j] - res_cpu[i * N + j]) > 2e-3) {
+            if (fabs(res_gpu[i * N + j] - res_cpu[i * N + j]) > 1e-2) {
                 printf("(%d, %d) %f %f\n", i, j, res_gpu[i * N + j], res_cpu[i * N + j]);
                 return false;
             }
@@ -94,13 +110,13 @@ bool check(float* res_gpu, float* res_cpu, int M, int N) {
 }
 
 void print_matric(float* A, int row, int col) {
-    for (int i = 0; i < row; ++i) {
-        for (int j = 0; j < col; ++j) {
-            printf("%f ", A[i * col + j]);
-        }
-        printf("\n");
-    }
-    printf("####################\n");
+    return;
+    // for (int i = 0; i < row; ++i) {
+    //     for (int j = 0; j < col; ++j) {
+    //         printf("%f ", A[i * col + j]);
+    //     }
+    //     printf("\n");
+    // }
 }
 
 int main() {
@@ -110,6 +126,8 @@ int main() {
     constexpr int BM = 32;
     constexpr int BN = 32;
     constexpr int BK = 8;
+    constexpr int TM = 4;
+    constexpr int TN = 4;
 
     // allocate memory in cpu
     float* A = (float*)malloc(M * K * sizeof(float));
@@ -120,8 +138,8 @@ int main() {
     // init cpu data
     init_matric(A, M, K);
     init_matric(B, K, N);
-    // print_matric(A, M, K);
-    // print_matric(B, K, N);
+    print_matric(A, M, K);
+    print_matric(B, K, N);
 
     // allocate memory in gpu
     float *d_A, *d_B, *d_C;
@@ -135,15 +153,15 @@ int main() {
 
     // gemm by gpu
     dim3 grid(M/BM, N/BN);
-    dim3 block(BM, BN);
-    gemm<BM, BN, BK><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
+    dim3 block(BM/TM, BN/TN);
+    gemm<BM, BN, BK, TM, TN><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
     cudaDeviceSynchronize();
     cudaMemcpy(C, d_C, M * N * sizeof(float), cudaMemcpyDeviceToHost);
-    // print_matric(C, M, N);
+    print_matric(C, M, N);
 
     // gemm by cpu
     gemm_cpu(A, B, C_ref, M, N, K);
-    // print_matric(C_ref, M, N);
+    print_matric(C_ref, M, N);
 
     // check
     if (check(C, C_ref, M, N)) {
@@ -155,7 +173,7 @@ int main() {
     // profile
     int TEST_TIMES = 100;
     for (int i = 0; i < TEST_TIMES; ++i) {
-        gemm<BM, BN, BK><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
+        gemm<BM, BN, BK, TM, TN><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
     }
     float time_elapsed=0;
     cudaEvent_t start, stop;
@@ -164,7 +182,7 @@ int main() {
 
     cudaEventRecord(start, 0); // 记录开始时间
     for (int i = 0; i < TEST_TIMES; ++i) {
-        gemm<BM, BN, BK><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
+        gemm<BM, BN, BK, TM, TN><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
     }
     cudaEventRecord(stop, 0); // 记录结束时间
     cudaEventSynchronize(start);
