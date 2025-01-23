@@ -1,1 +1,1 @@
-nvcc -arch=sm_89 -rdc=true gemm_1.cu -o test.out && echo "compilation done" && ./test.out
+nvcc -arch=sm_89 -rdc=true gemm_3.cu -o test.out && echo "compilation done" && ./test.out

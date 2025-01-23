@@ -4,18 +4,18 @@ GFLOPs at matrix size M=4096, N=4096, K=4096:
 <!-- benchmark_results -->
 | Kernel                              |   GFLOPs/s | Performance relative to cuBLAS   |
 |:------------------------------------|-----------:|:---------------------------------|
-| 1: Naive                            |      681.3 | 1.4%                             |
-| 2: GMEM Coalescing                  |     4834   | 9.8%                             |
-| 3: SMEM Caching                     |     6552   | 13.3%                            |
-| 4: 1D Blocktiling                   |    19282.1 | 39.1%                            |
-| 5: 2D Blocktiling                   |    36052.5 | 73.1%                            |
-| 7: Avoid Bank Conflicts (Linearize) |    36745.5 | 74.5%                            |
-| 8: Avoid Bank Conflicts (Offset)    |    37437.6 | 75.9%                            |
-| 12: Double Buffering                |    41475.7 | 84.1%                            |
-| 9: Autotuning                       |    42945.9 | 87.1%                            |
-| 6: Vectorized Mem Access            |    43326.3 | 87.9%                            |
-| 10: Warptiling                      |    46349.9 | 94.0%                            |
-| 0: cuBLAS                           |    49305.6 | 100.0%                           |
+| 1: Naive                            |      673.5 | 1.3%                             |
+| 2: GMEM Coalescing                  |     5217.8 | 10.4%                            |
+| 3: SMEM Caching                     |     6481.4 | 12.9%                            |
+| 4: 1D Blocktiling                   |    19308   | 38.6%                            |
+| 5: 2D Blocktiling                   |    35636.5 | 71.2%                            |
+| 7: Avoid Bank Conflicts (Linearize) |    36609.9 | 73.1%                            |
+| 8: Avoid Bank Conflicts (Offset)    |    37057.6 | 74.0%                            |
+| 12: Double Buffering                |    41475.7 | 82.8%                            |
+| 6: Vectorized Mem Access            |    42464.2 | 84.8%                            |
+| 9: Autotuning                       |    42827.2 | 85.5%                            |
+| 10: Warptiling                      |    45319.9 | 90.5%                            |
+| 0: cuBLAS                           |    50067.4 | 100.0%                           |
 <!-- benchmark_results -->
 
 ## Setup

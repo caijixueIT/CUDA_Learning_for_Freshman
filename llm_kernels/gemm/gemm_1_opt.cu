@@ -18,81 +18,41 @@ float rand_float() {
 };
 
 
-// 每个 block 计算 C 中大小为 BM * BN 的子矩阵, block 个数 = (M / BM) * (N / BN)
-// 每个 thread 计算 C 中大小为 TM * TN 的子矩阵, thread 个数 = (BM / TM) * (BN / TN)
 // grid(M / BM, N / BN)
-// block(BM / TM, BN / TN)
+// block(BM, BN)
 // A [M, K]
 // B [K, N]
 // C [M, N]
-template<int BM=32, int BN=32, int BK=4, int TM=4, int TN=4>
+template<int BM, int BN, int BK>
 __global__ void gemm(float* A, float* B, float* C, int M, int N, int K) {
     __shared__ float sA[BM][BK];
     __shared__ float sB[BK][BN];
-    
-    float regA[TM];
-    float regB[TN];
-    float vals[TM][TN] = {0.f};
-    for (int k = 0; k < K / BK; ++k) {
-        #pragma unroll
-        for (int i = threadIdx.x; i < BM; i += TM) {
-            #pragma unroll
-            for (int j = threadIdx.y; j < BN; j += TN) {
-                int A_row = blockIdx.x * BM + i;
-                int B_col = blockIdx.y * BN + j;
-                #pragma unroll
-                for (int l = threadIdx.y; l < BK; l +=TN) {
-                    int A_col = k * BK + l;
-                    sA[i][l] = A[A_row * K + A_col];
-                }
-                #pragma unroll
-                for (int l = threadIdx.x; l < BK; l += TM) {
-                    int B_row = k * BK + l;
-                    sB[l][j] = B[B_row * N + B_col];
-                }
-            }
-        }
-        __syncthreads();
-        
-        // inner product
-        // for (int i = 0; i < TM; ++i) {
-        //     for (int j = 0; j < TN; ++j) {
-        //         for (int l = 0; l < BK; l++) {
-        //             vals[i][j] += sA[i * BM / TM + threadIdx.x][l] * sB[l][j * BN / TN + threadIdx.y];
-        //         }
-        //     }
-        // }
 
-        // outer product
-        #pragma unroll
-        for (int l = 0; l < BK; l++) {
-            #pragma unroll
-            for (int i = 0; i < TM; ++i) {
-                regA[i] = sA[i * BM / TM + threadIdx.x][l];
-            }
-            #pragma unroll
-            for (int j = 0; j < TN; j++) {
-                regB[j] = sB[l][j * BN / TN + threadIdx.y];
-            }
-            #pragma unroll
-            for (int i = 0; i < TM; ++i) {
-                #pragma unroll
-                for (int j = 0; j < TN; j++) {
-                    vals[i][j] += regA[i] * regB[j];
-                }
-            }
+    int tx = threadIdx.x / BN;
+    int ty = threadIdx.x % BN;
+
+    int A_row = blockIdx.x * BM + tx;
+    int B_col = blockIdx.y * BN + ty;
+
+    float val = 0.f;
+    for (int k = 0; k < K / BK; ++k) {
+        for (int i = ty; i < BK; i += BN) {
+            int A_col = k * BK + i;
+            sA[tx][i] = A[A_row * K + A_col];
+        }
+        for (int i = tx; i < BK; i += BM) {
+            int B_row = k * BK + i;
+            sB[i][ty] = B[B_row * N + B_col];
+        }
+        __syncthreads();
+
+        for (int i = 0; i < BK; ++i) {
+            val += sA[tx][i] * sB[i][ty];
         }
         __syncthreads();
     }
-    #pragma unroll
-    for (int i = 0; i < TM; ++i) {
-        #pragma unroll
-        for (int j = 0; j < TN; ++j) {
-            int C_row = blockIdx.x * BM + i * (BM / TM) + threadIdx.x;
-            int C_col = blockIdx.y * BN + j * (BN / TN) + threadIdx.y;
-            C[C_row * N + C_col] = vals[i][j];
-        }
-    }
+
+    C[A_row * N + B_col] = val;
 }
 
 void gemm_cpu(float* A, float* B, float* C, int M, int N, int K) {
@@ -115,18 +75,11 @@ void init_matric(float* A, int row, int col) {
     }
 }
 
-void init_identity_matric(float* A, int row, int col) {
-    for (int i = 0; i < row; ++i) {
-        for (int j = 0; j < col; ++j) {
-            A[i * col + j] = (i == j ? 1.f : 0.f);
-        }
-    }
-}
-
 bool check(float* res_gpu, float* res_cpu, int M, int N) {
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {
-            if (fabs(res_gpu[i * N + j] - res_cpu[i * N + j]) > 1e-2) {
+            // printf("(%d, %d) %f %f\n", i, j, res_gpu[i * N + j], res_cpu[i * N + j]);
+            if (fabs(res_gpu[i * N + j] - res_cpu[i * N + j]) > 2e-3) {
                 printf("(%d, %d) %f %f\n", i, j, res_gpu[i * N + j], res_cpu[i * N + j]);
                 return false;
             }
@@ -136,24 +89,22 @@ bool check(float* res_gpu, float* res_cpu, int M, int N) {
 }
 
 void print_matric(float* A, int row, int col) {
-    return;
-    // for (int i = 0; i < row; ++i) {
-    //     for (int j = 0; j < col; ++j) {
-    //         printf("%f ", A[i * col + j]);
-    //     }
-    //     printf("\n");
-    // }
+    for (int i = 0; i < row; ++i) {
+        for (int j = 0; j < col; ++j) {
+            printf("%f ", A[i * col + j]);
+        }
+        printf("\n");
+    }
+    printf("####################\n");
 }
 
 int main() {
     int M = 1024 * 2;
     int N = 1024 * 2;
     int K = 1024 * 1;
-    constexpr int BM = 128;
-    constexpr int BN = 128;
+    constexpr int BM = 32;
+    constexpr int BN = 32;
     constexpr int BK = 8;
-    constexpr int TM = 8;
-    constexpr int TN = 8;
 
     // allocate memory in cpu
     float* A = (float*)malloc(M * K * sizeof(float));
@@ -164,8 +115,8 @@ int main() {
     // init cpu data
     init_matric(A, M, K);
     init_matric(B, K, N);
-    print_matric(A, M, K);
-    print_matric(B, K, N);
+    // print_matric(A, M, K);
+    // print_matric(B, K, N);
 
     // allocate memory in gpu
     float *d_A, *d_B, *d_C;
@@ -179,15 +130,15 @@ int main() {
 
     // gemm by gpu
     dim3 grid(M/BM, N/BN);
-    dim3 block(BM/TM, BN/TN);
-    gemm<BM, BN, BK, TM, TN><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
+    dim3 block(BM * BN);
+    gemm<BM, BN, BK><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
     cudaDeviceSynchronize();
     cudaMemcpy(C, d_C, M * N * sizeof(float), cudaMemcpyDeviceToHost);
-    print_matric(C, M, N);
+    // print_matric(C, M, N);
 
     // gemm by cpu
     gemm_cpu(A, B, C_ref, M, N, K);
-    print_matric(C_ref, M, N);
+    // print_matric(C_ref, M, N);
 
     // check
     if (check(C, C_ref, M, N)) {
@@ -199,7 +150,7 @@ int main() {
     // profile
     int TEST_TIMES = 100;
     for (int i = 0; i < TEST_TIMES; ++i) {
-        gemm<BM, BN, BK, TM, TN><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
+        gemm<BM, BN, BK><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
     }
     float time_elapsed=0;
     cudaEvent_t start, stop;
@@ -208,7 +159,7 @@ int main() {
 
     cudaEventRecord(start, 0); // 记录开始时间
     for (int i = 0; i < TEST_TIMES; ++i) {
-        gemm<BM, BN, BK, TM, TN><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
+        gemm<BM, BN, BK><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
     }
     cudaEventRecord(stop, 0); // 记录结束时间
     cudaEventSynchronize(start);

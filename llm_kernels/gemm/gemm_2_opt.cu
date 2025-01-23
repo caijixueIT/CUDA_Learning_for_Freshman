@@ -29,24 +29,27 @@ template<int BM=32, int BN=32, int BK=4, int TM=4, int TN=4>
 __global__ void gemm(float* A, float* B, float* C, int M, int N, int K) {
     __shared__ float sA[BM][BK];
     __shared__ float sB[BK][BN];
+
+    int tx = threadIdx.x / (BN / TN);
+    int ty = threadIdx.x % (BN / TN);
     
     float regA[TM];
     float regB[TN];
     float vals[TM][TN] = {0.f};
     for (int k = 0; k < K / BK; ++k) {
         #pragma unroll
-        for (int i = threadIdx.x; i < BM; i += TM) {
+        for (int i = tx; i < BM; i += TM) {
             #pragma unroll
-            for (int j = threadIdx.y; j < BN; j += TN) {
+            for (int j = ty; j < BN; j += TN) {
                 int A_row = blockIdx.x * BM + i;
                 int B_col = blockIdx.y * BN + j;
                 #pragma unroll
-                for (int l = threadIdx.y; l < BK; l +=TN) {
+                for (int l = ty; l < BK; l +=TN) {
                     int A_col = k * BK + l;
                     sA[i][l] = A[A_row * K + A_col];
                 }
                 #pragma unroll
-                for (int l = threadIdx.x; l < BK; l += TM) {
+                for (int l = tx; l < BK; l += TM) {
                     int B_row = k * BK + l;
                     sB[l][j] = B[B_row * N + B_col];
                 }
@@ -58,7 +61,7 @@ __global__ void gemm(float* A, float* B, float* C, int M, int N, int K) {
         // for (int i = 0; i < TM; ++i) {
         //     for (int j = 0; j < TN; ++j) {
         //         for (int l = 0; l < BK; l++) {
-        //             vals[i][j] += sA[i * BM / TM + threadIdx.x][l] * sB[l][j * BN / TN + threadIdx.y];
+        //             vals[i][j] += sA[i * BM / TM + tx][l] * sB[l][j * BN / TN + ty];
         //         }
         //     }
         // }
@@ -68,11 +71,11 @@ __global__ void gemm(float* A, float* B, float* C, int M, int N, int K) {
         for (int l = 0; l < BK; l++) {
             #pragma unroll
             for (int i = 0; i < TM; ++i) {
-                regA[i] = sA[i * BM / TM + threadIdx.x][l];
+                regA[i] = sA[i * BM / TM + tx][l];
             }
             #pragma unroll
             for (int j = 0; j < TN; j++) {
-                regB[j] = sB[l][j * BN / TN + threadIdx.y];
+                regB[j] = sB[l][j * BN / TN + ty];
             }
             #pragma unroll
             for (int i = 0; i < TM; ++i) {
@@ -88,8 +91,8 @@ __global__ void gemm(float* A, float* B, float* C, int M, int N, int K) {
     for (int i = 0; i < TM; ++i) {
         #pragma unroll
         for (int j = 0; j < TN; ++j) {
-            int C_row = blockIdx.x * BM + i * (BM / TM) + threadIdx.x;
-            int C_col = blockIdx.y * BN + j * (BN / TN) + threadIdx.y;
+            int C_row = blockIdx.x * BM + i * (BM / TM) + tx;
+            int C_col = blockIdx.y * BN + j * (BN / TN) + ty;
             C[C_row * N + C_col] = vals[i][j];
         }
     }
@@ -179,7 +182,7 @@ int main() {
 
     // gemm by gpu
     dim3 grid(M/BM, N/BN);
-    dim3 block(BM/TM, BN/TN);
+    dim3 block((BM/TM) * (BN/TN));
     gemm<BM, BN, BK, TM, TN><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
     cudaDeviceSynchronize();
     cudaMemcpy(C, d_C, M * N * sizeof(float), cudaMemcpyDeviceToHost);
