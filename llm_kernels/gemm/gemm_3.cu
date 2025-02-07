@@ -5,6 +5,7 @@
 #include <time.h>
 #include <sys/time.h>
 
+#define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 
 namespace random_utils {
 std::random_device rd;
@@ -41,34 +42,23 @@ __global__ void gemm(float* A, float* B, float* C, int M, int N, int K) {
         for (int i = tx; i < BM; i += TM) {
             int A_row = blockIdx.x * BM + i;
             #pragma unroll
-            for (int l = ty; l < BK; l +=TN) {
+            for (int l = ty * 4; l < BK; l += TN * 4) {
                 int A_col = k * BK + l;
-                sA[i][l] = A[A_row * K + A_col];
+                FETCH_FLOAT4(sA[i][l]) = FETCH_FLOAT4(A[A_row * K + A_col]);
             }
+            
         }
-        
-        
         #pragma unroll
-        for (int j = ty; j < BN; j += TN) {
-            int B_col = blockIdx.y * BN + j;
+        for (int i = tx; i < BK; i += TM) {
+            int B_row = k * BK + i;
             #pragma unroll
-            for (int l = tx; l < BK; l += TM) {
-                int B_row = k * BK + l;
-                sB[l][j] = B[B_row * N + B_col];
+            for (int l = ty * 4; l < BN; l += TN * 4) {
+                int B_col = blockIdx.y * BN + l;
+                FETCH_FLOAT4(sB[i][l]) = FETCH_FLOAT4(B[B_row * N + B_col]);
             }
         }
-        
         __syncthreads();
         
-        // inner product
-        // for (int i = 0; i < TM; ++i) {
-        //     for (int j = 0; j < TN; ++j) {
-        //         for (int l = 0; l < BK; l++) {
-        //             vals[i][j] += sA[i * BM / TM + tx][l] * sB[l][j * BN / TN + ty];
-        //         }
-        //     }
-        // }
-
         // outer product
         #pragma unroll
         for (int l = 0; l < BK; l++) {

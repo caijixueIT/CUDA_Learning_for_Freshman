@@ -36,22 +36,24 @@ __global__ void gemm(float* A, float* B, float* C, int M, int N, int K) {
     for (int k = 0; k < K / BK; ++k) {
         #pragma unroll
         for (int i = threadIdx.x; i < BM; i += TM) {
+            int A_row = blockIdx.x * BM + i;
             #pragma unroll
-            for (int j = threadIdx.y; j < BN; j += TN) {
-                int A_row = blockIdx.x * BM + i;
-                int B_col = blockIdx.y * BN + j;
-                #pragma unroll
-                for (int l = threadIdx.y; l < BK; l +=TN) {
-                    int A_col = k * BK + l;
-                    sA[i][l] = A[A_row * K + A_col];
-                }
-                #pragma unroll
-                for (int l = threadIdx.x; l < BK; l += TM) {
-                    int B_row = k * BK + l;
-                    sB[l][j] = B[B_row * N + B_col];
-                }
+            for (int l = threadIdx.y; l < BK; l +=TN) {
+                int A_col = k * BK + l;
+                sA[i][l] = A[A_row * K + A_col];
             }
         }
+        
+        #pragma unroll
+        for (int j = threadIdx.y; j < BN; j += TN) {
+            int B_col = blockIdx.y * BN + j;
+            #pragma unroll
+            for (int l = threadIdx.x; l < BK; l += TM) {
+                int B_row = k * BK + l;
+                sB[l][j] = B[B_row * N + B_col];
+            }
+        }
+        
         __syncthreads();
         
         // inner product
